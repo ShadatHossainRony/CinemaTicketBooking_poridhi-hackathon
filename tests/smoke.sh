@@ -441,9 +441,16 @@ if [[ "$IS_HTTPS" == "1" ]]; then
     # The probe gets a 5-second budget so an attacker-controlled service
     # can't keep us waiting.
     for port in 8000 8001 9000 5432; do
-      code="$(curl -sS -o /dev/null -m 5 -w '%{http_code}' \
-               "http://${PUBLIC_IP}:${port}/" 2>/dev/null || echo "000")"
-      if [[ "$code" == "000" ]]; then
+      # 🔴 Do NOT write this as `curl ... -w '%{http_code}' ... || echo "000"`.
+      # On a connection failure/timeout, curl still writes "000" via -w
+      # AND returns a non-zero exit code — so the `|| echo "000"` fires
+      # too, and the command substitution captures BOTH outputs
+      # concatenated: "000000", which then fails the `== "000"` check
+      # below and misreports a closed port as "reachable". Capture curl's
+      # own output and its exit code separately instead.
+      code="$(curl -sS -o /dev/null -m 5 -w '%{http_code}' "http://${PUBLIC_IP}:${port}/" 2>/dev/null)"
+      rc=$?
+      if [[ $rc -ne 0 ]] || [[ -z "$code" ]] || [[ "$code" == "000" ]]; then
         pass "port $port not reachable from the internet"
       else
         fail "port $port reachable from the internet" \
