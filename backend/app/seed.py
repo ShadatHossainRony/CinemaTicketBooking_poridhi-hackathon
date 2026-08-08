@@ -25,6 +25,7 @@ from app.core.logging import configure_logging, logger
 from app.db.session import get_session_factory, dispose_engine
 from app.models.booking import Booking
 from app.models.catalog import Movie, Screen, Show, Theatre
+from app.models.hold import Hold
 from app.models.seat import ShowSeat
 
 
@@ -215,7 +216,23 @@ async def pre_book_seats_for_premiere(session: AsyncSession, show_id: int, perce
 
     Skip F12 — that's the Scenario A target. This is what makes the seat
     map visibly non-uniform and the demo believable.
+
+    ★ Idempotent — sentinel-prefixed IDs are deterministic, so re-running
+    this is a no-op on existing rows.
+
+    ★ Splits seats across MULTIPLE holds (each ≤ 10 seats) because
+    `holds.seat_count` is CHECKed BETWEEN 1 AND 10. Each hold gets its
+    own booking. With 96 seats and 20% (19 seats), we end up with 2
+    synthetic holds + 2 synthetic bookings.
     """
+    # Skip if we already pre-booked this show.
+    sentinel_prefix = f"seed_premiere_{show_id}_"
+    already = await session.execute(
+        select(Booking.booking_ref).where(Booking.hold_id.like(f"{sentinel_prefix}%"))
+    )
+    if already.first() is not None:
+        return 0
+
     seats = (
         (
             await session.execute(
@@ -237,27 +254,60 @@ async def pre_book_seats_for_premiere(session: AsyncSession, show_id: int, perce
     if not target:
         return 0
 
-    booking_ref = new_booking_ref()
-    booking = Booking(
-        booking_ref=booking_ref,
-        hold_id="seed_" + booking_ref,
-        show_id=show_id,
-        phone="+8801700000099",
-        status="CONFIRMED",
-        total_amount=sum((s.price for s in target), Decimal("0")),
-        currency="BDT",
-        ticket_code=f"CS-{show_id}-SEED",
-        confirmed_at=datetime.now(tz=timezone.utc),
-    )
-    session.add(booking)
-    await session.flush()
+    now = datetime.now(tz=timezone.utc)
+    booked_count = 0
+    MAX_PER_HOLD = 10  # the CHECK constraint is 1..10
 
-    for s in target:
-        s.status = "BOOKED"
-        s.booking_ref = booking.booking_ref
-        s.hold_id = None
-        s.reserved_until = None
-    return len(target)
+    # Split into chunks of MAX_PER_HOLD.
+    for chunk_idx, chunk in enumerate(_chunks(target, MAX_PER_HOLD)):
+        chunk_amount = sum((s.price for s in chunk), Decimal("0"))
+        booking_ref = new_booking_ref()
+        hold_id = f"{sentinel_prefix}{chunk_idx:02d}"
+
+        # Hold row (FK target for bookings.hold_id).
+        hold = Hold(
+            id=hold_id,
+            show_id=show_id,
+            phone="+8801700000099",
+            status="CONVERTED",
+            seat_count=len(chunk),
+            total_amount=chunk_amount,
+            currency="BDT",
+            expires_at=now,
+        )
+        session.add(hold)
+        await session.flush()
+
+        # Booking row.
+        booking = Booking(
+            booking_ref=booking_ref,
+            hold_id=hold_id,
+            show_id=show_id,
+            phone="+8801700000099",
+            status="CONFIRMED",
+            total_amount=chunk_amount,
+            currency="BDT",
+            ticket_code=f"CS-{show_id}-SEED-{chunk_idx:02d}",
+            confirmed_at=now,
+        )
+        session.add(booking)
+        await session.flush()
+
+        # Flip the seats in this chunk.
+        for s in chunk:
+            s.status = "BOOKED"
+            s.booking_ref = booking.booking_ref
+            s.hold_id = None
+            s.reserved_until = None
+        booked_count += len(chunk)
+
+    return booked_count
+
+
+def _chunks(items: list, size: int) -> Iterable[list]:
+    """Yield `items` split into lists of at most `size`."""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 # --------------------------------------------------------------------------- #
