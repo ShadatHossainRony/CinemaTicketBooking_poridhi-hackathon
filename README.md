@@ -168,6 +168,45 @@ that isn't real). Three ways to get past `POST /bookings/{ref}/otp/verify`:
   returns `503 GATEWAY_UNAVAILABLE` instead of burning 5 s on each call.
 - Browsing, seat maps, and holds keep working — they never touch the gateway.
 
+## Bonus tasks
+
+*Worth up to +10 marks per the rulebook. Attempted only once the required milestones were
+solid — status below is what's actually true right now, not aspirational.*
+
+- [x] **Fault isolation.** With the gateway down: `/health` stays `200` (REQ-18), `/ready`
+  degrades to `200 degraded` instead of `503`, and browsing/seat-map/holds never call the
+  gateway at all, so they're unaffected. A circuit breaker opens after 5 consecutive gateway
+  failures so `/pay` fails fast instead of hanging. Pending payments recover once the gateway
+  is back — the gateway itself retries undelivered callbacks (up to 8×, exponential backoff),
+  our callback handler is idempotent, and `tasks/reconcile.py` re-applies any ledger event that
+  was written but never applied (e.g. a crash mid-request). See "How the gateway going down is
+  handled" above.
+- [ ] **Monitoring and observability.** Not implemented. We have structured JSON logs with a
+  request ID on every line (`core/logging.py`), but no metrics endpoint (Prometheus/OpenMetrics)
+  and no distributed tracing.
+- [ ] **Graceful degradation under peak.** Not implemented. There's no isolation between
+  showtimes under load — hammering one show's hold endpoint is not currently shown to leave
+  headroom for people browsing other movies.
+- [x] **Nginx reverse proxy and load balancing.** Host-installed Nginx terminates TLS and
+  proxies to an `upstream` block spread across two API replicas (`api`, `api2`) plus the
+  frontend container, per `nginx/cinemaseat.conf`.
+- **Security basics — partially implemented:**
+  - [x] Gateway callback signature verification (`X-Signature`, HMAC-SHA256, constant-time
+    compare) — `services/signature.py`.
+  - [x] Input validation — Pydantic v2 request/response models on every endpoint.
+  - [x] OTP abuse controls — 30 s resend cooldown, 5-attempt lockout, both app-level.
+  - [ ] No authentication/authorization system. This is a deliberate scope call (ADR-011):
+    phone + OTP identity and unguessable capability references (`hold_id`/`booking_ref`)
+    stand in for accounts. Documented, not hidden — see `DECISIONS.md`.
+  - [ ] The `POST /holds` Nginx rate-limit zone described in `agent/04-api-contract.md`
+    (5 r/s per IP, burst 20) is not present in the deployed `nginx/cinemaseat.conf`.
+- [ ] **AWS deployment.** Not attempted. We deployed to the provisioned GCP VM (the simpler
+  of the two documented deployment options) — no AWS resources were used.
+- [ ] **Scenario C (breakpoint under load).** Not completed. `tests/load/k6-load.js` and
+  `tests/load/locustfile.py` exist, but we have no recorded run — no p95 curve, no observed
+  error onset, no bottleneck writeup. Scripts are ready to run; the result and explanation
+  the rubric actually scores on don't exist yet.
+
 ## Environment variables
 
 See `.env.example`. Every variable has a safe default in `docker-compose.yml`, so a clean
