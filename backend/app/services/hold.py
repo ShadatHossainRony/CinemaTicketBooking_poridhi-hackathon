@@ -56,6 +56,30 @@ async def create_hold_for_seats(
     expires_at = datetime.now(tz=timezone.utc) + timedelta(seconds=settings.hold_ttl_seconds)
     hold_id = new_hold_id()
 
+    # total_amount has to be known before the holds row is created (see
+    # below), so price is looked up directly rather than derived from the
+    # claim result — prices are static seed data, identical either way.
+    price_map = await seat_repo.get_seat_prices_for_labels(
+        session, show_id=show_id, seat_labels=seat_labels
+    )
+    total_amount = sum((price_map[s] for s in seat_labels if s in price_map), Decimal("0"))
+
+    # ★ Ordering: show_seats.hold_id is a foreign key to holds.id, so the
+    # holds row must exist before claim_seats can set it. If the claim below
+    # comes back short, SeatUnavailableError aborts before session.commit()
+    # is reached, and the exception handler in get_db rolls back the whole
+    # transaction — this insert included — exactly as before.
+    await hold_repo.create_hold(
+        session,
+        hold_id=hold_id,
+        show_id=show_id,
+        phone=phone,
+        seat_count=len(seat_labels),
+        total_amount=total_amount,
+        currency=show.currency,
+        expires_at=expires_at,
+    )
+
     # The atomic claim. If the row count is short, the whole tx rolls back.
     claimed = await seat_repo.claim_seats(
         session,
@@ -73,17 +97,6 @@ async def create_hold_for_seats(
             details=[{"field": "seats", "issue": f"seat {s} is not available"} for s in unavailable],
         )
 
-    total_amount = sum((Decimal(str(row["price"])) for row in claimed), Decimal("0"))
-    await hold_repo.create_hold(
-        session,
-        hold_id=hold_id,
-        show_id=show_id,
-        phone=phone,
-        seat_count=len(seat_labels),
-        total_amount=total_amount,
-        currency=show.currency,
-        expires_at=expires_at,
-    )
     await session.commit()
 
     return {
