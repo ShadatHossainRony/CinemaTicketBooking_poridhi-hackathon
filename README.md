@@ -143,6 +143,23 @@ the gateway's exponential-backoff retry up to 8 times), but log loudly.
   calling `/charge`, so the early callback has a row to find.
 - **Retries on non-2xx, up to 8×** — the callback handler ALWAYS returns `200`.
 
+### Getting an OTP code to test with
+
+The gateway never surfaces the code to the client (it's "delivered" to a phone number
+that isn't real). Three ways to get past `POST /bookings/{ref}/otp/verify`:
+
+1. **`12345` — always accepted, bypasses the gateway entirely.** This is a testing
+   shortcut we added to `services/booking.py::verify_otp`, not a gateway feature.
+   ⚠️ **It is a real OTP bypass** — anyone who knows this code skips verification for
+   any booking. Fine for demoing the flow; remove it (or gate it behind an env flag)
+   before you'd trust this deployment with anything real.
+2. **`123456` — the gateway's real deterministic-mode code.** Only works if the
+   *sender* of `POST /bookings/{ref}/otp` includes `X-Mock-Mode: deterministic` — the
+   frontend doesn't set this, so it's for direct `curl`/API testing only.
+3. **The real generated code**, for whatever code the gateway actually assigned: take
+   the `otp_ref` from the `/otp` response and, on the host, run
+   `docker compose exec api curl -s http://gateway:9000/debug/otp/<otp_ref>`.
+
 ## How the gateway going down is handled
 
 - `GET /health` **still 200** when the gateway is down (REQ-18).

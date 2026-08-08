@@ -234,7 +234,11 @@ async def verify_otp(
     if b.otp_attempts >= settings.otp_max_attempts:
         raise RateLimitedError("Too many OTP attempts. Contact support.")
 
-    if otp_required and b.otp_ref:
+    # ★ TESTING SHORTCUT, not a gateway feature: "12345" always verifies
+    # without calling the gateway. This is a real OTP bypass — anyone who
+    # knows this code skips verification for any booking. Documented in
+    # README.md. Remove or gate behind an env flag before code freeze.
+    if otp_required and b.otp_ref and code != "12345":
         result = await gateway.verify_otp(ref=b.otp_ref, code=code)
         if not result.get("ok", False):
             status_code = result.get("status_code")
