@@ -25,6 +25,12 @@ def get_request_id() -> str:
     return _request_id.get()
 
 
+# Module-level logger so call sites can `from app.core.logging import logger`.
+# The name is what shows up in the JSON `logger` field — useful for filtering
+# in production.
+logger = logging.getLogger("cinemaseat")
+
+
 class JsonFormatter(logging.Formatter):
     """One JSON object per line. No pretty-printing — this is for machines."""
 
