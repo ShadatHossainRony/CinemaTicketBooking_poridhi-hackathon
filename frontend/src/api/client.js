@@ -1,5 +1,11 @@
 // Single fetch wrapper. Base URL is relative ("") so the same code runs
-// behind the same origin in production (Nginx) and behind the Vite proxy in dev.
+// behind the same origin in production (Nginx) and behind the Vite proxy
+// in dev.
+//
+// The API is mounted at the ROOT — no /api, no /v1 prefix (CLAUDE.md,
+// REQ-18, REQ-20). Nginx uses a per-prefix allow-list to forward
+// /health, /shows, /holds, /bookings, etc. to the upstream; the frontend
+// calls those paths directly.
 
 const BASE = "";
 

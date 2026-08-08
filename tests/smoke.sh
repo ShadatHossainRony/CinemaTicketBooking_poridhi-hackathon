@@ -17,6 +17,7 @@
 # The contract it asserts:  agent/04-api-contract.md   (canonical)
 #
 # NOTE: the API is mounted at the ROOT. There is no /api or /v1 prefix.
+# Nginx uses a per-prefix allow-list (see nginx/cinemaseat.conf).
 
 set -uo pipefail
 

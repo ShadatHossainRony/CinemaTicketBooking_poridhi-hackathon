@@ -28,6 +28,22 @@ curl -fsS localhost:8000/health
 That is the whole local story. The `migrate` container runs `alembic upgrade head` and
 seeds the catalogue on first boot; the `api` containers wait for it to finish.
 
+## URL routing
+
+The API is mounted at the **root** — no `/api` prefix, no `/v1` (REQ-18, REQ-20).
+Nginx uses a per-prefix allow-list (see `nginx/cinemaseat.conf`) to forward API
+calls upstream. Everything else falls through to the SPA's `try_files`.
+
+| Path | Served by |
+| --- | --- |
+| `/health` `/ready` `/movies` `/theatres` `/shows` `/holds` `/bookings` `/docs` `/openapi.json` | FastAPI, via Nginx per-prefix `location` blocks |
+| `/payments/callback` | **NOT routed publicly** — internal Docker network only (callback-forgery control, REQ-13) |
+| everything else (`/`) | SPA via `try_files $uri $uri/ /index.html` |
+
+The split works for today's SPA and tomorrow's multi-page app: when you add a
+new page at `/booking/bk_xxx` or `/admin/dashboard`, it lands in the SPA
+namespace automatically — no Nginx change.
+
 ## The two endpoints judges will point tests at
 
 ### `GET /shows/{show_id}/seats` — fetch the seat map
