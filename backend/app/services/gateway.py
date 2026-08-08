@@ -220,7 +220,8 @@ class GatewayClient:
             r = await client.post("/otp/verify", json={"ref": ref, "code": code})
             if r.status_code == 200:
                 self.breaker.record_success()
-                return r.json() if r.content else {}
+                data = r.json() if r.content else {}
+                return {"ok": True, **data}
             # 400 — wrong / expired code. Caller maps this to OtpInvalidError.
             if r.status_code == 400:
                 self.breaker.record_success()
