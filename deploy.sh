@@ -11,7 +11,7 @@ REPO_DIR="${REPO_DIR:-/opt/cinemaseat}"
 BRANCH="${BRANCH:-main}"
 LOG_DIR="${LOG_DIR:-/var/log/cinemaseat}"
 DEPLOY_USER="${DEPLOY_USER:-cinemaseat}"
-WEB_ROOT="${WEB_ROOT:-/var/www/cinemaseat}"
+WEB_ROOT="${WEB_ROOT:-/srv/cinemaseat-dist}"
 
 mkdir -p "$LOG_DIR"
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_DIR/deploy.log"; }
@@ -35,21 +35,25 @@ docker compose build api api2 frontend
 log "docker compose up migrate"
 docker compose up migrate
 
-# 4. Build & publish the SPA. The `frontend` container's Dockerfile writes
-#    its Vite dist to ./frontend/dist via a bind mount.
-log "docker compose up -d --no-deps frontend"
-docker compose up -d --no-deps frontend
-# Wait for the build to finish.
-for _ in $(seq 1 60); do
-  if [[ -f frontend/dist/index.html ]]; then break; fi
-  sleep 1
-done
-[[ -f frontend/dist/index.html ]] || { log "frontend build did not produce dist/index.html"; exit 1; }
+# 4. Build & extract the SPA. The `frontend` image is build-only (never
+#    started — see the `build-only` profile in docker-compose.yml). We
+#    pull the built /dist out with `docker create` + `docker cp` into a
+#    scratch directory, then rsync --delete it into $WEB_ROOT so stale
+#    hashed asset files from a previous build don't accumulate forever.
+log "docker compose build frontend"
+docker compose build frontend
 
-# 5. Publish to Nginx's doc root (host-installed Nginx serves from here).
-log "publish SPA to $WEB_ROOT"
+log "extract SPA -> $WEB_ROOT"
+EXTRACT_CID="$(docker create cinemaseat-frontend:local)"
+EXTRACT_TMP="$(mktemp -d)"
+docker cp "${EXTRACT_CID}:/dist/." "$EXTRACT_TMP/"
+docker rm "$EXTRACT_CID" >/dev/null
+[[ -f "$EXTRACT_TMP/index.html" ]] || { log "frontend extraction did not produce index.html"; rm -rf "$EXTRACT_TMP"; exit 1; }
+
 mkdir -p "$WEB_ROOT"
-rsync -a --delete frontend/dist/ "$WEB_ROOT/"
+rsync -a --delete "$EXTRACT_TMP/" "$WEB_ROOT/"
+rm -rf "$EXTRACT_TMP"
+chmod -R a+rX "$WEB_ROOT"
 chown -R "${DEPLOY_USER}:www-data" "$WEB_ROOT" 2>/dev/null || true
 
 # 6. Restart API replicas one at a time so the app stays reachable.

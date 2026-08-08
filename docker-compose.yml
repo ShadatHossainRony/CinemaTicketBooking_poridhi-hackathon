@@ -133,21 +133,23 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  # ---- Frontend: builds the SPA once, persists dist to a host bind mount.
-  # The bind mount is directed at the host's Nginx doc root
-  # (/var/www/cinemaseat) so Nginx serves the SPA as soon as the build
-  # finishes — no separate publish step, no rsync, no race.
-  # Re-deploys just need `docker compose up -d --build frontend`.
+  # ---- Frontend: BUILD-ONLY. Never started by `docker compose up` — the
+  # `build-only` profile keeps it out of the default service set, so
+  # `docker compose up` brings up db/gateway/migrate/api/api2 and nothing
+  # else touches this.
+  #
+  # deploy.sh / `make build-frontend` build this image, then `docker
+  # create` + `docker cp` pull the built /dist out to the host (default
+  # /srv/cinemaseat-dist), where host-installed Nginx serves it directly.
+  # No bind mount, no persistent container holding a mount open, no
+  # image-content-shadowed-by-an-empty-host-directory gotcha (see the
+  # comment in frontend/Dockerfile and DECISIONS.md for what that gotcha
+  # actually was — three earlier commits on this branch tried to fix it
+  # by changing the mount *path*, which doesn't address the cause).
   frontend:
     build: { context: ./frontend, dockerfile: Dockerfile }
-    restart: unless-stopped
-    volumes:
-      - /var/www/cinemaseat:/dist
-    networks: [appnet]
-    security_opt: ["no-new-privileges:true"]
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    image: cinemaseat-frontend:local
+    profiles: ["build-only"]
 
 volumes:
   pgdata:

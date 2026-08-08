@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.errors import BookingNotPayableError
 from app.core.ids import new_ticket_code
 from app.core.logging import logger
 from app.repositories import booking as booking_repo
@@ -46,6 +47,8 @@ async def start_payment(
     b = await ensure_payable(session, booking_ref=booking_ref)
 
     # Step 1: payment row keyed on OUR booking_ref, gateway_payment_id NULL.
+    # Guarded by uq_payments_live_per_booking — a second PENDING/SUCCEEDED
+    # row for this booking is impossible at the schema level.
     await booking_repo.create_pending_payment(
         session,
         booking_ref=b.booking_ref,
@@ -53,7 +56,29 @@ async def start_payment(
         currency=b.currency,
     )
 
-    # Step 2: extend reservation, move seats HELD → PAYMENT_PENDING.
+    # Step 2: ★ the actual idempotency guard for this endpoint.
+    # `ensure_payable` above only READ the booking. A stale duplicate
+    # /pay call — a double-click, a client-side retry — can reach this
+    # point *after* the booking has already been confirmed (or failed)
+    # by a callback that landed and committed on a completely different
+    # request/session in between. Writing the status unconditionally
+    # here would silently revert a CONFIRMED booking back to
+    # PAYMENT_PENDING. Making the precondition and the write one
+    # statement (mirroring seat_repo.claim_seats) closes that window:
+    # the row only moves if it is still in a state /pay may act on.
+    transitioned = await booking_repo.transition_booking_status(
+        session,
+        booking_ref=b.booking_ref,
+        to_status="PAYMENT_PENDING",
+        from_statuses=["OTP_VERIFIED", "PAYMENT_PENDING"],
+    )
+    if not transitioned:
+        await session.rollback()
+        current = await booking_repo.get_booking(session, b.booking_ref)
+        state = current.status if current is not None else "UNKNOWN"
+        raise BookingNotPayableError(f"Booking is {state}.")
+
+    # Step 3: extend reservation, move seats HELD → PAYMENT_PENDING.
     reserved_until = datetime.now(tz=timezone.utc) + timedelta(
         seconds=settings.payment_window_seconds
     )
@@ -63,10 +88,9 @@ async def start_payment(
         hold_id=b.hold_id,
         reserved_until=reserved_until,
     )
-    await booking_repo.set_booking_status(session, booking_ref=b.booking_ref, status="PAYMENT_PENDING")
     await session.commit()
 
-    # Step 3: fire-and-forget /charge. Never block /pay on the gateway.
+    # Step 4: fire-and-forget /charge. Never block /pay on the gateway.
     amount_minor = int(b.total_amount)  # BDT has no minor unit in our seed
     try:
         result = await gateway.charge(

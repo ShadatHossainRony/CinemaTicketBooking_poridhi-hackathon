@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking, GatewayEvent, Payment
@@ -60,6 +60,16 @@ async def set_booking_status(
     ticket_code: str | None = None,
     confirmed_at: datetime | None = None,
 ) -> int:
+    """Unconditional write. Only safe when the caller already holds an
+    exclusive reason to believe no concurrent writer can be racing this
+    booking — e.g. `apply_callback`, which is itself serialised per
+    `event_id` by the gateway_events ledger insert before this ever runs.
+
+    For any caller that reads the booking, does other work, and only
+    later decides to write (e.g. /pay) — use `transition_booking_status`
+    instead. This function performs no state check and will happily
+    overwrite whatever is there.
+    """
     booking = await session.get(Booking, booking_ref)
     if booking is None:
         return 0
@@ -69,6 +79,43 @@ async def set_booking_status(
     if confirmed_at is not None:
         booking.confirmed_at = confirmed_at
     return 1
+
+
+async def transition_booking_status(
+    session: AsyncSession,
+    *,
+    booking_ref: str,
+    to_status: str,
+    from_statuses: list[str],
+) -> bool:
+    """Conditional transition. Returns True if the row moved.
+
+    Mirrors `seat_repo.claim_seats`: the precondition and the write are
+    one statement, so a caller that read the booking earlier (and may now
+    be acting on stale information — a duplicate /pay call racing its own
+    confirmation callback is the concrete case this exists for) cannot
+    clobber a state it never actually observed. The row only moves if it
+    is still in one of `from_statuses` at the instant this statement runs.
+    """
+    sql = text(
+        """
+        UPDATE bookings
+           SET status = :to_status,
+               updated_at = now()
+         WHERE booking_ref = :booking_ref
+           AND status = ANY(:from_statuses)
+        RETURNING booking_ref
+        """
+    ).bindparams(bindparam("from_statuses", expanding=True))
+    result = await session.execute(
+        sql,
+        {
+            "booking_ref": booking_ref,
+            "to_status": to_status,
+            "from_statuses": from_statuses,
+        },
+    )
+    return result.first() is not None
 
 
 async def set_booking_otp_verified(

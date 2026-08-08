@@ -9,6 +9,7 @@
 #   BASE_URL=http://localhost:8000 ./tests/smoke.sh     # local (skips TLS/header checks)
 #   VERBOSE=1 ./tests/smoke.sh                          # print response bodies
 #   SMOKE_SEAT=H4 ./tests/smoke.sh                      # use a different scratch seat
+#   PUBLIC_IP=203.0.113.10 ./tests/smoke.sh             # skip the public-IP lookup
 #
 # Requires: bash 4+, curl. Uses python3 for JSON parsing if present, and falls
 # back to grep so it still works on a bare VM.
@@ -420,14 +421,65 @@ if [[ "$IS_HTTPS" == "1" ]]; then
     pass "★ /payments/callback not publicly routable (falls through to the SPA)"
   fi
 
-  for port in 8000 8001 9000 5432; do
-    code="$(curl -sS -o /dev/null -m 5 -w '%{http_code}' "http://${DOMAIN}:${port}/" 2>/dev/null || echo "000")"
-    if [[ "$code" == "000" ]]; then
-      pass "port $port not reachable from the internet"
-    else
-      fail "port $port not reachable from the internet" "got HTTP $code — CRITICAL exposure"
-    fi
-  done
+  # ---- 8a. Resolve the host's PUBLIC IP -------------------------------
+  # The HTTPS target's DNS A record is fine for routing TLS, but it may
+  # also be a CNAME that points at a reverse-proxy with no exposed ports.
+  # For the port-exposure probe we need the host's actual IPv4 — the one
+  # Docker's `127.0.0.1:8000:8000` publish rule binds to.
+  PUBLIC_IP="${PUBLIC_IP:-}"
+  if [[ -z "$PUBLIC_IP" ]]; then
+    PUBLIC_IP="$(curl -fsS -m 5 https://api.ipify.org 2>/dev/null || true)"
+  fi
+  if [[ -z "$PUBLIC_IP" ]] || ! [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    skip "port-exposure probe" "could not resolve host's public IP (set PUBLIC_IP=... to override)"
+  else
+    pass "resolved host public IP: $PUBLIC_IP"
+
+    # ---- 8b. Probe the public IP at the four sensitive ports. ---------
+    # If a port is reachable, it means Docker bound it to 0.0.0.0 (or
+    # the host firewall is wide open). Either way: critical exposure.
+    # The probe gets a 5-second budget so an attacker-controlled service
+    # can't keep us waiting.
+    for port in 8000 8001 9000 5432; do
+      code="$(curl -sS -o /dev/null -m 5 -w '%{http_code}' \
+               "http://${PUBLIC_IP}:${port}/" 2>/dev/null || echo "000")"
+      if [[ "$code" == "000" ]]; then
+        pass "port $port not reachable from the internet"
+      else
+        fail "port $port reachable from the internet" \
+             "got HTTP $code from $PUBLIC_IP — CRITICAL exposure (api / gateway / db)"
+      fi
+    done
+  fi
+
+  # ---- 8c. Local regression check: Docker ports stay loopback-only. ----
+  # This is faster and more reliable than the external probe. It catches
+  # the regression class that the public-IP probe was meant to catch:
+  # someone changing `"127.0.0.1:8000:8000"` to `"8000:8000"` in
+  # docker-compose.yml (silently exposing the API to the world).
+  if command -v docker >/dev/null 2>&1; then
+    bad_binds="$(docker compose -f "$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml" \
+                   port api      8000 2>/dev/null; \
+                 docker compose -f "$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml" \
+                   port api2     8000 2>/dev/null; \
+                 docker compose -f "$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml" \
+                   port gateway  9000 2>/dev/null; \
+                 docker compose -f "$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml" \
+                   port db       5432 2>/dev/null)"
+    # `docker compose port` returns "0.0.0.0:8000" or "127.0.0.1:8000".
+    # Anything other than the loopback form is a fail.
+    while IFS= read -r bind; do
+      [[ -z "$bind" ]] && continue
+      if [[ "$bind" == 127.0.0.1:* ]]; then
+        pass "Docker port bind is loopback-only: $bind"
+      else
+        fail "Docker port bind exposes the host" \
+             "got '$bind' — change '0.0.0.0:PORT:PORT' to '127.0.0.1:PORT:PORT' in docker-compose.yml"
+      fi
+    done <<< "$bad_binds"
+  else
+    skip "Docker port-bind check" "docker CLI not on PATH"
+  fi
 else
   skip "network exposure checks" "local target"
 fi

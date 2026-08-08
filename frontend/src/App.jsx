@@ -16,6 +16,10 @@ export default function App() {
   const [code, setCode] = useState("");
   const [pollStatus, setPollStatus] = useState(null);
   const [error, setError] = useState(null);
+  // Guards every action button against a double-click / double-submit
+  // firing the same request twice (the concrete trigger for the /pay
+  // race the backend now also guards against — belt and suspenders).
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -29,6 +33,37 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Live seat map refresh. Without this, a seat someone else holds only
+  // turns visibly unavailable once *you* try to click it and get a 409 —
+  // reactive, not proactive. Polling every 3s means it greys out for
+  // every viewer as soon as it's taken, matching what the seat map is
+  // supposed to communicate. Stops once a hold is active: at that point
+  // the countdown on *your* hold is what matters, not other seats.
+  useEffect(() => {
+    if (!selectedShow || hold) return undefined;
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.seatMap(selectedShow);
+        setSeatMap(data);
+        // If a seat the user had selected (but not yet held) was just
+        // taken by someone else, drop it from the local selection too —
+        // otherwise "Hold" would submit a seat the map already shows as
+        // unavailable, and the 409 would be a surprise rather than the
+        // grey-out being the answer.
+        setSelected((cur) => {
+          const stillAvailable = new Set(
+            data.seats.filter((s) => s.status === "AVAILABLE").map((s) => s.seat)
+          );
+          return cur.filter((s) => stillAvailable.has(s));
+        });
+      } catch {
+        // Transient poll failure — try again on the next tick, don't
+        // surface a banner for a background refresh.
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [selectedShow, hold]);
 
   async function loadSeatMap(showId) {
     const data = await api.seatMap(showId);
@@ -47,6 +82,8 @@ export default function App() {
   }
 
   async function doHold() {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       const res = await api.hold({
@@ -57,38 +94,59 @@ export default function App() {
       setHold(res);
     } catch (e) {
       setError(e.body?.error?.message || e.message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function doBook() {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       const res = await api.booking(hold.hold_id);
       setBooking(res);
     } catch (e) {
       setError(e.body?.error?.message || e.message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function doSendOtp() {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await api.sendOtp(booking.booking_ref);
     } catch (e) {
       setError(e.body?.error?.message || e.message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function doVerify() {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await api.verifyOtp(booking.booking_ref, code);
     } catch (e) {
       setError(e.body?.error?.message || e.message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function doPay() {
+    // Held for the whole attempt, including the poll loop below — this is
+    // what actually prevents a double-click from firing two /pay calls
+    // while the first is still in flight (the backend now also guards
+    // this server-side; disabling the button is the first line of
+    // defense so the surprising case doesn't happen in normal use).
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await api.pay(booking.booking_ref);
@@ -105,6 +163,7 @@ export default function App() {
       } catch {}
       await new Promise((r) => setTimeout(r, 2000));
     }
+    setBusy(false);
   }
 
   const seatsByRow = useMemo(() => {
@@ -209,9 +268,10 @@ export default function App() {
                 </label>
                 <button
                   onClick={doHold}
-                  className="bg-accent text-white rounded px-4 py-2 text-sm font-medium"
+                  disabled={busy}
+                  className="bg-accent text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Hold {selected.join(", ")}
+                  {busy ? "Holding…" : `Hold ${selected.join(", ")}`}
                 </button>
               </div>
             )}
@@ -229,9 +289,10 @@ export default function App() {
             </div>
             <button
               onClick={doBook}
-              className="bg-accent text-white rounded px-4 py-2 text-sm font-medium"
+              disabled={busy}
+              className="bg-accent text-white rounded px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create booking
+              {busy ? "Creating…" : "Create booking"}
             </button>
           </section>
         )}
@@ -245,9 +306,10 @@ export default function App() {
             </div>
             <button
               onClick={doSendOtp}
-              className="bg-panel border border-muted text-text rounded px-3 py-2 text-sm mr-2"
+              disabled={busy}
+              className="bg-panel border border-muted text-text rounded px-3 py-2 text-sm mr-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Send OTP
+              {busy ? "Sending…" : "Send OTP"}
             </button>
             <div className="mt-3 flex gap-2 items-end">
               <input
@@ -258,9 +320,10 @@ export default function App() {
               />
               <button
                 onClick={doVerify}
-                className="bg-accent text-white rounded px-4 py-2 text-sm"
+                disabled={busy}
+                className="bg-accent text-white rounded px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Verify
+                {busy ? "Verifying…" : "Verify"}
               </button>
             </div>
           </section>
@@ -272,9 +335,10 @@ export default function App() {
             <h2 className="font-semibold mb-3">5. Pay</h2>
             <button
               onClick={doPay}
-              className="bg-accent text-white rounded px-4 py-2 text-sm"
+              disabled={busy}
+              className="bg-accent text-white rounded px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Start payment
+              {busy ? "Processing…" : "Start payment"}
             </button>
             {pollStatus && (
               <div className="mt-3 text-sm">
