@@ -73,7 +73,18 @@ services:
       - "127.0.0.1:9000:9000"
     networks: [appnet]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/health || exit 1"]
+      # Deliberately NOT wget/curl: this is a third-party image we do not
+      # rebuild (problem_statement.md:60, "Do not mock this yourself"),
+      # so we cannot be sure either binary is installed in it — and it
+      # was reporting `unhealthy` on a real deploy because wget wasn't
+      # there. Node is guaranteed present (it's what runs the gateway),
+      # so a one-line http.get is the only dependency-free check we can
+      # rely on here.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:9000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
       interval: 10s
       timeout: 3s
       retries: 5
