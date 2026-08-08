@@ -133,6 +133,23 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # ---- Frontend: builds the SPA once, persists dist to a host bind mount.
+  # deploy.sh then copies ./frontend/dist/* into /var/www/cinemaseat so the
+  # host-installed Nginx (nginx/cinemaseat.conf) can serve the SPA and
+  # route API paths upstream to `api` / `api2`. nginx/cinemaseat.conf
+  # uses a path-segment allow-list: /health|/movies|/shows|/holds|...
+  # are proxied; everything else falls through to the SPA via try_files.
+  frontend:
+    build: { context: ./frontend, dockerfile: Dockerfile }
+    restart: unless-stopped
+    volumes:
+      - ./frontend/dist:/dist
+    networks: [appnet]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
 volumes:
   pgdata:
     name: cinemaseat_pgdata
