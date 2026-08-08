@@ -74,7 +74,7 @@ async def create_booking_from_hold(
         )
     if hold.status in ("CONVERTED", "RELEASED"):
         raise HoldNotActiveError(f"Hold is {hold.status}.")
-    if hold.status == "ACTIVE" and hold.expires_at <= datetime.utcnow():
+    if hold.status == "ACTIVE" and hold.expires_at <= datetime.now(tz=timezone.utc):
         # Lazy expiry — also flip the row.
         await hold_repo.mark_hold_status(session, hold_id=hold_id, status="EXPIRED")
         await seat_repo.release_hold_seats(session, hold_id=hold_id)

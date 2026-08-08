@@ -1,7 +1,7 @@
 """Hold repository — CRUD on the hold aggregate."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -56,7 +56,7 @@ async def expire_active_holds(session: AsyncSession) -> int:
 
     result = await session.execute(
         update(Hold)
-        .where(Hold.status == "ACTIVE", Hold.expires_at <= datetime.utcnow())
+        .where(Hold.status == "ACTIVE", Hold.expires_at <= datetime.now(tz=timezone.utc))
         .values(status="EXPIRED")
     )
     return result.rowcount or 0
