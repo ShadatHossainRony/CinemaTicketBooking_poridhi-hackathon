@@ -6,9 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -74,6 +78,7 @@ jobs:
 
   compose-up:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Bring up the stack
@@ -89,6 +94,11 @@ jobs:
           docker compose ps
       - name: Smoke /health
         run: curl -fsS http://127.0.0.1:8000/health
+      - name: Smoke frontend
+        run: curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/ | grep -q '^200$'
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
       - name: Tear down
         if: always()
-        run: docker compose down
+        run: docker compose down -v

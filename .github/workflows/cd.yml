@@ -1,35 +1,83 @@
 name: CD
 
+# REQ-34: CD runs ONLY on pushes to the default branch (plus a manual
+# escape hatch for re-running a deploy without a new commit — e.g. to
+# pick up a `gateway` image update). Never on pull_request.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+# A second push landing mid-deploy must not run concurrently against the
+# same VM (deploy.sh restarts services one at a time — two interleaved
+# runs could restart api/api2/frontend out of order). Queue, don't cancel
+# a deploy that's already touching the live stack.
+concurrency:
+  group: cd-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify required secrets are set
+        env:
+          SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+        run: |
+          missing=()
+          [[ -z "$SSH_KEY" ]] && missing+=("VM_SSH_KEY")
+          [[ -z "$VM_USER" ]] && missing+=("VM_USER")
+          [[ -z "$VM_HOST" ]] && missing+=("VM_HOST")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing repo secret(s): ${missing[*]} — set them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Setup SSH key
         env:
           SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-          VM_USER: ${{ secrets.VM_USER }}
           VM_HOST: ${{ secrets.VM_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          mkdir -p -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -H "$VM_HOST" >> ~/.ssh/known_hosts
 
       - name: Run deploy.sh on the VM
         env:
-          SSH_KEY: ${{ secrets.VM_SSH_KEY }}
           VM_USER: ${{ secrets.VM_USER }}
           VM_HOST: ${{ secrets.VM_HOST }}
         run: |
-          ssh -i ~/.ssh/deploy_key "$VM_USER@$VM_HOST" \
-            "cd /opt/cinemaseat && BASE_URL=https://poridhi-hackathon.shadathossainrony.dev ./deploy.sh"
+          ssh -i ~/.ssh/deploy_key \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" \
+            "cd /opt/cinemaseat && BASE_URL=https://poridhi-hackathon.shadathossainrony.dev ./deploy.sh" \
+            | tee deploy-output.log
+
+      - name: Record deployed SHA
+        if: always()
+        run: |
+          sha=$(grep -oE 'deploy done \(sha=[0-9a-f]+\)' deploy-output.log | grep -oE '[0-9a-f]{7,}' || echo "unknown")
+          {
+            echo "### Deploy result"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Deployed SHA on VM: \`$sha\`"
+            echo "- URL: https://poridhi-hackathon.shadathossainrony.dev"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
