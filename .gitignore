@@ -1,0 +1,131 @@
+# ============================================================================
+# Zero to Production — Phase 2 Hackathon
+#
+# DOC DIRECTORY SPLIT — read this before adding anything:
+#   agent/   = INTERNAL working memory. Planning, runbooks, cut lists, pitch
+#              notes, troubleshooting. Written for us, under fatigue, at 17:00.
+#              IGNORED — judges never see it, and it must not dilute the repo.
+#   docs/    = JUDGE-FACING submission documentation. Architecture overview,
+#              API reference, setup guide, deployment guide.
+#              TRACKED — this is a scored deliverable (Rulebook §7.1, §9.3).
+#
+# CLAUDE.md is the agent's operating manual — internal, ignored.
+# README.md is the front door for judges — tracked, always.
+# ============================================================================
+
+# --- Internal agent working memory (never shipped) --------------------------
+agent/
+CLAUDE.md
+
+# --- Secrets & credentials (Rulebook §6.2: committing these costs points) ----
+.env
+.env.*
+*.env
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+*-service-account.json
+gcp-key*.json
+.htpasswd
+
+# ...but the config SURFACE must be visible to judges:
+!.env.example
+!.env.sample
+!.env.template
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
+
+# --- Node / frontend --------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+.npm/
+.pnpm-store/
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Tooling / editors / OS -------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.direnv/
+
+# --- Logs -------------------------------------------------------------------
+*.log
+logs/
+
+# --- Local data volumes & throwaway DBs -------------------------------------
+pgdata/
+postgres_data/
+postgres-data/
+db_data/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+
+# --- Docker local scratch ---------------------------------------------------
+.docker/
+docker-compose.local.yml
+
+# ============================================================================
+# EXPLICITLY TRACKED — defensive negations so a broad rule above can never
+# swallow a scored deliverable. Do not remove these lines.
+# ============================================================================
+!README.md
+!docs/
+!docs/**
+!tests/
+!tests/**
+!nginx/
+!nginx/**
+!Makefile
+!docker-compose*.yml
+!Dockerfile*
+!.dockerignore
+!alembic/
+!alembic/**
+!.github/
+!.github/**
