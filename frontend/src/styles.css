@@ -47,3 +47,9 @@ body {
   color: #6b7280;
   cursor: not-allowed;
 }
+
+/* Premium-class seats get a thin gold ring on top of whatever status
+   colour applies — status still wins the fill, class is just an accent. */
+.seat-premium {
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.6);
+}

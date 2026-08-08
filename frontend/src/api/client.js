@@ -27,7 +27,10 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
 }
 
 export const api = {
-  movies: () => request("/movies"),
+  movies: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request("/movies" + (q ? `?${q}` : ""));
+  },
   theatres: () => request("/theatres"),
   shows: (params = {}) => {
     const q = new URLSearchParams(params).toString();

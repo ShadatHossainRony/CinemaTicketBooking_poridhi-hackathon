@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Sequence
 
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID  # noqa: F401
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -117,6 +117,18 @@ async def claim_seats(
     This single statement is the *only* place a seat moves to HELD. Never
     read-then-write. Never a mutex. The predicate and the write are one
     statement so no window exists between checking and claiming.
+
+    NOTE on the `seat_labels` parameter: this must NOT use SQLAlchemy's
+    `bindparam(..., expanding=True)`. `expanding` exists for `IN (:param)`
+    clauses — it substitutes `:param` with `(?, ?, ?)`, one placeholder
+    per list element. Paired with `ANY(:seat_labels)`, that compiles to
+    `ANY((?, ?, ?))` — a parenthesized tuple, not a Postgres array — which
+    Postgres rejects as a syntax/type error on every single call (verified
+    by compiling this exact statement: expanding produces `ANY((?, ?))`,
+    a genuinely broken query, not `ANY(?)`). `ANY(...)` wants exactly ONE
+    parameter that IS an array. Passing the plain Python list below (no
+    `bindparam` at all) lets psycopg adapt it to a real Postgres array,
+    which is what `= ANY(:seat_labels)` actually requires.
     """
     sql = text(
         """
@@ -133,7 +145,7 @@ async def claim_seats(
            )
         RETURNING id, seat_label, seat_class, price
         """
-    ).bindparams(bindparam("seat_labels", expanding=True))
+    )
 
     result = await session.execute(
         sql,

@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking, GatewayEvent, Payment
@@ -96,6 +96,13 @@ async def transition_booking_status(
     confirmation callback is the concrete case this exists for) cannot
     clobber a state it never actually observed. The row only moves if it
     is still in one of `from_statuses` at the instant this statement runs.
+
+    NOTE: no `bindparam(..., expanding=True)` here — that substitutes
+    `:from_statuses` with `(?, ?, ?)`, producing `ANY((?, ?, ?))`, a
+    parenthesized tuple rather than a Postgres array, which Postgres
+    rejects. `ANY(...)` takes exactly one array-typed parameter; passing
+    the plain Python list lets psycopg adapt it correctly. (Same bug,
+    same fix, as `seat_repo.claim_seats` — see the note there.)
     """
     sql = text(
         """
@@ -106,7 +113,7 @@ async def transition_booking_status(
            AND status = ANY(:from_statuses)
         RETURNING booking_ref
         """
-    ).bindparams(bindparam("from_statuses", expanding=True))
+    )
     result = await session.execute(
         sql,
         {
