@@ -134,9 +134,9 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   # ---- Frontend: builds the SPA once, persists dist to a host bind mount.
-  # deploy.sh then copies ./frontend/dist/* into /var/www/cinemaseat so the
-  # host-installed Nginx (nginx/cinemaseat.conf) can serve the SPA and
-  # route API paths upstream to `api` / `api2`. nginx/cinemaseat.conf
+  # A `publish` step below rsyncs `./frontend/dist` → `/var/www/cinemaseat`
+  # so the host-installed Nginx (nginx/cinemaseat.conf) can serve the SPA
+  # and route API paths upstream to `api` / `api2`. nginx/cinemaseat.conf
   # uses a path-segment allow-list: /health|/movies|/shows|/holds|...
   # are proxied; everything else falls through to the SPA via try_files.
   frontend:
@@ -149,6 +149,28 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+
+  # ---- Publish: rsync ./frontend/dist → /var/www/cinemaseat on the host.
+  # Bind-mounts both the source (from the `frontend` write-mount) and the
+  # host Nginx doc root, then exits. Re-run after every frontend rebuild.
+  publish:
+    image: alpine:3.20
+    volumes:
+      - ./frontend/dist:/src:ro
+      - /var/www/cinemaseat:/dst
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f /src/index.html ]; then
+          echo "publish: /src/index.html missing — start the 'frontend' service first" >&2
+          exit 1
+        fi
+        apk add --no-cache rsync >/dev/null
+        rsync -a --delete /src/ /dst/
+        echo "publish: copied $$(find /src -type f | wc -l) files to /var/www/cinemaseat"
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
 
 volumes:
   pgdata:
