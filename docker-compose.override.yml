@@ -1,0 +1,15 @@
+# Local dev only. NOT present on the VM.
+# Adds a published DB port and hot-reload for the API.
+services:
+  db:
+    ports: ["127.0.0.1:5433:5432"]
+  api:
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    environment:
+      ENVIRONMENT: local
+      LOG_LEVEL: DEBUG
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+  api2:
+    profiles: ["lb"]  # single replica locally unless you ask for it

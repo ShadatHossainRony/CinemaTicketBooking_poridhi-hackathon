@@ -1,0 +1,142 @@
+name: cinemaseat
+
+# Every value has a dev-safe default so `docker compose up` works with NO
+# `.env` (REQ-21). A real `.env` at repo root overrides any of them.
+x-api-env: &api-env
+  APP_NAME:               ${APP_NAME:-cinemaseat-api}
+  APP_VERSION:            ${APP_VERSION:-0.1.0}
+  ENVIRONMENT:            ${ENVIRONMENT:-local}
+  LOG_LEVEL:              ${LOG_LEVEL:-INFO}
+  PUBLIC_BASE_URL:        ${PUBLIC_BASE_URL:-http://localhost:8000}
+  CORS_ORIGINS:           ${CORS_ORIGINS:-http://localhost:5173}
+  # ---- database ----
+  POSTGRES_USER:          ${POSTGRES_USER:-cinemaseat}
+  POSTGRES_PASSWORD:      ${POSTGRES_PASSWORD:-cinemaseat_dev_pw}
+  POSTGRES_DB:            ${POSTGRES_DB:-cinemaseat}
+  POSTGRES_HOST:          db
+  POSTGRES_PORT:          5432
+  DB_POOL_SIZE:           ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW:        ${DB_MAX_OVERFLOW:-10}
+  DB_POOL_TIMEOUT:        ${DB_POOL_TIMEOUT:-10}
+  # ---- REQ-19: judges override this and watch a hold expire ----
+  HOLD_TTL_SECONDS:       ${HOLD_TTL_SECONDS:-120}
+  PAYMENT_WINDOW_SECONDS: ${PAYMENT_WINDOW_SECONDS:-90}
+  SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-5}
+  RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-30}
+  MAX_SEATS_PER_HOLD:     ${MAX_SEATS_PER_HOLD:-6}
+  # ---- REQ-08: the provided gateway, reachable by service name ----
+  GATEWAY_BASE_URL:       http://gateway:9000
+  GATEWAY_CALLBACK_URL:   ${GATEWAY_CALLBACK_URL:-http://api:8000/payments/callback}
+  GATEWAY_TIMEOUT_SECONDS:        ${GATEWAY_TIMEOUT_SECONDS:-5.0}
+  GATEWAY_HEALTH_TIMEOUT_SECONDS: ${GATEWAY_HEALTH_TIMEOUT_SECONDS:-1.0}
+  GATEWAY_BREAKER_THRESHOLD:      ${GATEWAY_BREAKER_THRESHOLD:-5}
+  GATEWAY_BREAKER_RESET_SECONDS:  ${GATEWAY_BREAKER_RESET_SECONDS:-30}
+  # HMAC shared with the gateway. Default "z2p-2026-secret" matches the
+  # gateway's GATEWAY_SECRET default; override on the VM.
+  GATEWAY_SECRET:           ${GATEWAY_SECRET:-z2p-2026-secret}
+  GATEWAY_SIGNATURE_REQUIRED: ${GATEWAY_SIGNATURE_REQUIRED:-true}
+  # ---- OTP (Q-05: OTP_REQUIRED is the escape hatch, never flipped silently) ----
+  OTP_REQUIRED:               ${OTP_REQUIRED:-true}
+  OTP_MAX_ATTEMPTS:           ${OTP_MAX_ATTEMPTS:-5}
+  OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-30}
+  # ---- rate limiting (INF-09) ----
+  # Must NOT shed Scenario A's 100-request burst.
+  RATE_LIMIT_HOLD_PER_MINUTE:    ${RATE_LIMIT_HOLD_PER_MINUTE:-120}
+  RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-600}
+  SESSION_SECRET:         ${SESSION_SECRET:-dev-only-not-a-secret}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-cinemaseat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cinemaseat_dev_pw}
+      POSTGRES_DB:       ${POSTGRES_DB:-cinemaseat}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    security_opt: ["no-new-privileges:true"]
+
+  # ---- REQ-08 / REQ-11: the PROVIDED gateway. We do not mock it. ----
+  gateway:
+    image: asifmahmoud414/mock-gateway:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ---- REQ-21: migrations + seed run automatically, ONCE, then exit ----
+  migrate:
+    build: { context: ./backend, dockerfile: Dockerfile, target: runtime }
+    environment: *api-env
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [appnet]
+    restart: "no"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+
+  api:
+    build: { context: ./backend, dockerfile: Dockerfile, target: runtime }
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      db:      { condition: service_healthy }
+      gateway: { condition: service_started }   # NOT service_healthy — see notes
+      migrate: { condition: service_completed_successfully }
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # ---- REQ-47 (Nginx load balancing) + REQ-36 (reachable during deploy) ----
+  api2:
+    build: { context: ./backend, dockerfile: Dockerfile, target: runtime }
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      db:      { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  pgdata:
+    name: cinemaseat_pgdata
+
+networks:
+  appnet:
+    driver: bridge

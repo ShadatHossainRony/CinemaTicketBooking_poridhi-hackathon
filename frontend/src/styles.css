@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.seat {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.seat.available {
+  background: #1f2a44;
+  color: #cfd5e6;
+}
+.seat.available:hover {
+  background: #2b3a5c;
+}
+.seat.selected {
+  background: #e50914;
+  color: #fff;
+  border-color: #ff7b80;
+}
+.seat.held {
+  background: #6b7280;
+  color: #fff;
+  cursor: not-allowed;
+}
+.seat.booked {
+  background: #2b3245;
+  color: #6b7280;
+  cursor: not-allowed;
+}

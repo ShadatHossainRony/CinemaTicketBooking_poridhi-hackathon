@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cinemaseat
+          POSTGRES_PASSWORD: cinemaseat_dev_pw
+          POSTGRES_DB: cinemaseat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cinemaseat -d cinemaseat"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        working-directory: backend
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Migrate
+        working-directory: backend
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: cinemaseat
+          POSTGRES_PASSWORD: cinemaseat_dev_pw
+          POSTGRES_DB: cinemaseat
+        run: |
+          alembic upgrade head
+
+      - name: Seed
+        working-directory: backend
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: cinemaseat
+          POSTGRES_PASSWORD: cinemaseat_dev_pw
+          POSTGRES_DB: cinemaseat
+        run: python -m app.seed
+
+      - name: Pytest
+        working-directory: backend
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: cinemaseat
+          POSTGRES_PASSWORD: cinemaseat_dev_pw
+          POSTGRES_DB: cinemaseat
+        run: pytest -q --tb=short
+
+  compose-up:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring up the stack
+        run: |
+          docker compose up -d --build
+      - name: Wait for migrate
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker compose ps migrate --format '{{.State}}' || echo "")
+            if [[ "$status" == "exited" ]]; then break; fi
+            sleep 2
+          done
+          docker compose ps
+      - name: Smoke /health
+        run: curl -fsS http://127.0.0.1:8000/health
+      - name: Tear down
+        if: always()
+        run: docker compose down
