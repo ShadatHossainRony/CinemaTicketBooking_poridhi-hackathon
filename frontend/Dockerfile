@@ -38,24 +38,26 @@ RUN npm run build 2>&1 | tee /tmp/build.log && \
     test -f /app/dist/index.html && \
     echo ">>> /app/dist/index.html present"
 
-# ---------- stage 2: artifact carrier ----------
-# This image is NEVER started with `docker compose up` (see the
-# `build-only` profile on the `frontend` service in docker-compose.yml).
-# It exists purely so `docker create` + `docker cp` can pull /dist out to
-# the host — see deploy.sh and `make build-frontend`.
+# ---------- stage 2: runtime — serves the built SPA ----------
+# A real, tiny, well-known static file server: nginx:alpine. Runs as a
+# normal `restart: unless-stopped` compose service, on par with api/api2
+# — not a special-cased build-only image. Host Nginx (nginx/cinemaseat.conf)
+# proxies `location /` to this container over loopback, exactly the way
+# it already proxies API paths to the api/api2 upstream: the frontend is
+# just another upstream now, not a directory host Nginx reads from disk.
 #
-# We deliberately do NOT bind-mount a host directory onto /dist here.
-# A host bind mount replaces the container's target directory with
-# whatever is at the host path — it does not merge with and does not
-# get pre-populated from the image's baked content. That auto-populate
-# behaviour is a *named volume* feature, not a bind-mount one. Wiring
-# this as `volumes: - /some/host/path:/dist` (as three earlier commits on
-# this branch tried, under /var/www/html and then /srv/cinemaseat-dist)
-# silently discards the built assets on every container start: Nginx's
-# root ends up serving an empty directory forever. See DECISIONS.md.
-FROM busybox:1.36 AS artifact
-COPY --from=build /app/dist /dist
-# Confirm the COPY succeeded before declaring the image healthy. If
-# `/dist` is empty the build fails loudly here instead of silently.
-RUN test -f /dist/index.html || (echo ">>> ERROR: /dist/index.html missing after COPY" && exit 1)
-CMD ["true"]
+# (An earlier iteration tried to avoid running a frontend container at
+# all — build once, `docker cp` the artifact out, have host Nginx serve
+# it from a plain directory. That's a defensible design, and it's
+# documented as the alternative in agent/07-containerization.md §2 — but
+# it traded a real, battle-tested reverse-proxy target for a hand-rolled
+# host-bind-mount deploy step, which is exactly where the "empty
+# directory forever" bug came from. Running nginx:alpine here is a
+# few MB and gets a healthcheck, a restart policy, and `docker compose
+# logs frontend` for free.)
+FROM nginx:1.27-alpine AS runtime
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
+  CMD wget --spider -q http://localhost/ || exit 1

@@ -3,7 +3,9 @@
 Runs as part of the `migrate` container. Every insert is get-or-create on
 a natural key. Running ten times must not duplicate or crash.
 
-4 movies · 2 theatres · 3 screens · 12 shows · ~1,152 show_seats.
+4 movies · 2 theatres · 3 screens · 12 shows · 1,440 show_seats.
+Every screen is standardized to 8 rows (A-H) x 15 seats (120 seats/screen)
+so the frontend seat map never has to render a different shape per show.
 ~20% of seats on the premiere show are pre-BOOKED. Seat F12 on show 1
 is left AVAILABLE — that is the Scenario A target.
 """
@@ -66,9 +68,11 @@ THEATRES = [
 
 SCREENS = [
     # (theatre_name, screen_name, row_count, seats_per_row, premium_from_row)
-    ("Star Cineplex Chattogram", "Screen 1", 8, 12, "E"),
-    ("Star Cineplex Chattogram", "Screen 2", 6, 10, "D"),
-    ("Blockbuster Cinema Dhaka", "Hall A",    8, 12, "E"),
+    # Standardized: every screen is 8 rows (A-H) x 15 seats. Rows E-H are
+    # PREMIUM, A-D are STANDARD.
+    ("Star Cineplex Chattogram", "Screen 1", 8, 15, "E"),
+    ("Star Cineplex Chattogram", "Screen 2", 8, 15, "E"),
+    ("Blockbuster Cinema Dhaka", "Hall A",    8, 15, "E"),
 ]
 
 # (theatre_name, screen_name, movie_title, days_from_now, hour_utc)

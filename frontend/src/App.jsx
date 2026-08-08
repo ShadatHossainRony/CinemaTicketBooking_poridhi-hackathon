@@ -2,22 +2,25 @@
 // The API is mounted at the root, so a client-side route named /shows
 // would collide with the API's own /shows and be shadowed by Nginx's
 // allow-list. Every "screen" here is a value swap, never a URL change.
+//
+// Flow is deliberately two steps, not four: pick a movie, then pick seats
+// (theatre/time is a compact selector inside the seat view itself, not a
+// page of its own) — the seat lock only happens when the customer commits
+// to pay, same as the BD Railway seat-lock pattern.
 import React, { useState } from "react";
 import StatusBadge from "./components/StatusBadge.jsx";
 import Browse from "./views/Browse.jsx";
-import Showtimes from "./views/Showtimes.jsx";
 import SeatMap from "./views/SeatMap.jsx";
 import Checkout from "./views/Checkout.jsx";
 import Ticket from "./views/Ticket.jsx";
 
 const DEMO_PHONE = "+8801700000001";
-const STEPS = ["Movie", "Showtime", "Seats", "Checkout"];
-const STEP_INDEX = { browse: 0, showtimes: 1, seatmap: 2, checkout: 3, ticket: 3 };
+const STEPS = ["Movie", "Seats", "Payment"];
+const STEP_INDEX = { browse: 0, seatmap: 1, checkout: 2, ticket: 2 };
 
 export default function App() {
   const [view, setView] = useState("browse");
   const [movie, setMovie] = useState(null);
-  const [show, setShow] = useState(null);
   const [hold, setHold] = useState(null);
   const [finalBooking, setFinalBooking] = useState(null);
   const [phone, setPhone] = useState(DEMO_PHONE);
@@ -26,7 +29,6 @@ export default function App() {
   function startOver() {
     setView("browse");
     setMovie(null);
-    setShow(null);
     setHold(null);
     setFinalBooking(null);
     setNotice(null);
@@ -77,25 +79,14 @@ export default function App() {
           <Browse
             onSelectMovie={(m) => {
               setMovie(m);
-              setView("showtimes");
-            }}
-          />
-        )}
-
-        {view === "showtimes" && movie && (
-          <Showtimes
-            movie={movie}
-            onSelectShow={(s) => {
-              setShow(s);
               setView("seatmap");
             }}
-            onBack={() => setView("browse")}
           />
         )}
 
-        {view === "seatmap" && show && (
+        {view === "seatmap" && movie && (
           <SeatMap
-            show={show}
+            movie={movie}
             phone={phone}
             onPhoneChange={setPhone}
             onHold={(h) => {
@@ -103,7 +94,7 @@ export default function App() {
               setNotice(null);
               setView("checkout");
             }}
-            onBack={() => setView("showtimes")}
+            onBack={() => setView("browse")}
           />
         )}
 

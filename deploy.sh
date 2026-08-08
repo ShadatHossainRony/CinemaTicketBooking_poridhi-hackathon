@@ -11,7 +11,6 @@ REPO_DIR="${REPO_DIR:-/opt/cinemaseat}"
 BRANCH="${BRANCH:-main}"
 LOG_DIR="${LOG_DIR:-/var/log/cinemaseat}"
 DEPLOY_USER="${DEPLOY_USER:-cinemaseat}"
-WEB_ROOT="${WEB_ROOT:-/srv/cinemaseat-dist}"
 
 mkdir -p "$LOG_DIR"
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_DIR/deploy.log"; }
@@ -35,45 +34,36 @@ docker compose build api api2 frontend
 log "docker compose up migrate"
 docker compose up migrate
 
-# 4. Build & extract the SPA. The `frontend` image is build-only (never
-#    started — see the `build-only` profile in docker-compose.yml). We
-#    pull the built /dist out with `docker create` + `docker cp` into a
-#    scratch directory, then rsync --delete it into $WEB_ROOT so stale
-#    hashed asset files from a previous build don't accumulate forever.
-log "docker compose build frontend"
-docker compose build frontend
-
-log "extract SPA -> $WEB_ROOT"
-EXTRACT_CID="$(docker create cinemaseat-frontend:local)"
-EXTRACT_TMP="$(mktemp -d)"
-docker cp "${EXTRACT_CID}:/dist/." "$EXTRACT_TMP/"
-docker rm "$EXTRACT_CID" >/dev/null
-[[ -f "$EXTRACT_TMP/index.html" ]] || { log "frontend extraction did not produce index.html"; rm -rf "$EXTRACT_TMP"; exit 1; }
-
-mkdir -p "$WEB_ROOT"
-rsync -a --delete "$EXTRACT_TMP/" "$WEB_ROOT/"
-rm -rf "$EXTRACT_TMP"
-chmod -R a+rX "$WEB_ROOT"
-chown -R "${DEPLOY_USER}:www-data" "$WEB_ROOT" 2>/dev/null || true
-
-# 6. Restart API replicas one at a time so the app stays reachable.
+# 4. Rolling-restart all three user-facing services, one at a time, so
+#    the app stays reachable throughout (REQ-36). The frontend is a
+#    normal service now — nginx:alpine serving the built SPA — so it
+#    redeploys exactly like api/api2 do. No extraction step, no rsync,
+#    no host directory to keep in sync.
 log "restart api"
 docker compose up -d --no-deps --force-recreate api
 sleep 5
+log "restart api2"
 docker compose up -d --no-deps --force-recreate api2
 sleep 3
+log "restart frontend"
+docker compose up -d --no-deps --force-recreate frontend
+sleep 3
 
-# 7. Reload Nginx so it picks up the new SPA files (asset hashes change).
+# 5. Reload Nginx. Its own config didn't change on a routine deploy, but
+#    this is cheap and catches the rare case where nginx/cinemaseat.conf
+#    itself changed in this pull.
 if command -v nginx >/dev/null 2>&1; then
   log "reload nginx"
   nginx -t && systemctl reload nginx || log "nginx reload failed (non-fatal)"
 fi
 
-# 8. Health check.
+# 6. Health check.
 log "GET /health"
 curl -fsS --max-time 10 http://127.0.0.1:8000/health || { log "/health failed"; exit 1; }
+log "frontend reachable"
+curl -fsS --max-time 10 -o /dev/null http://127.0.0.1:8080/ || { log "frontend container unreachable"; exit 1; }
 
-# 9. Smoke test (optional — fail loudly if BASE_URL is set).
+# 7. Smoke test (optional — fail loudly if BASE_URL is set).
 if [[ -n "${BASE_URL:-}" ]]; then
   log "smoke test against $BASE_URL"
   BASE_URL="$BASE_URL" ./tests/smoke.sh

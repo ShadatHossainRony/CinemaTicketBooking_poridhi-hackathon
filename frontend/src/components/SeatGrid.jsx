@@ -29,46 +29,52 @@ export default function SeatGrid({ seats, selected, onToggle, maxSeats }) {
         <Legend swatch="booked" label="Booked" />
       </div>
 
-      <div className="mb-4 rounded-lg bg-bg/50 p-3 text-center text-[11px] tracking-widest text-muted">
-        SCREEN THIS WAY
+      <div className="mb-6 flex flex-col items-center gap-1.5">
+        <div className="screen-curve" />
+        <div className="text-[10px] tracking-[0.3em] text-muted">SCREEN</div>
       </div>
 
       <div className="space-y-1.5 overflow-x-auto pb-1">
-        {Object.entries(seatsByRow).map(([row, rowSeats]) => (
-          <div key={row} className="flex items-center gap-1.5">
-            <span className="w-5 text-right text-xs text-muted">{row}</span>
-            {rowSeats.map((s) => {
-              const isSelected = selected.includes(s.seat);
-              const atLimit = !isSelected && selected.length >= maxSeats;
-              const disabled = (s.status !== "AVAILABLE" && !isSelected) || atLimit;
-              const cls =
-                s.status === "AVAILABLE"
-                  ? isSelected
-                    ? "selected"
-                    : "available"
-                  : s.status === "HELD"
-                  ? "held"
-                  : "booked";
-              const title = `${s.seat} · ${s.seat_class}${
-                s.status !== "AVAILABLE" ? ` · ${s.status.toLowerCase()}` : ` · ${s.price}`
-              }`;
-              return (
-                <button
-                  key={s.seat}
-                  type="button"
-                  disabled={disabled}
-                  title={title}
-                  onClick={() => onToggle(s)}
-                  className={`seat ${cls} ${s.seat_class === "PREMIUM" ? "seat-premium" : ""} ${
-                    atLimit ? "opacity-40" : ""
-                  }`}
-                >
-                  {s.number}
-                </button>
-              );
-            })}
-          </div>
-        ))}
+        {Object.entries(seatsByRow).map(([row, rowSeats]) => {
+          // A center-aisle gap after the 7th seat, like a real hall split
+          // into two blocks — purely visual, no effect on selection.
+          const aisleAfter = Math.ceil(rowSeats.length / 2);
+          return (
+            <div key={row} className="flex items-center gap-1.5">
+              <span className="w-5 text-right text-xs text-muted">{row}</span>
+              {rowSeats.map((s, i) => {
+                const isSelected = selected.includes(s.seat);
+                const atLimit = !isSelected && selected.length >= maxSeats;
+                const disabled = (s.status !== "AVAILABLE" && !isSelected) || atLimit;
+                const cls =
+                  s.status === "AVAILABLE"
+                    ? isSelected
+                      ? "selected"
+                      : "available"
+                    : s.status === "HELD"
+                    ? "held"
+                    : "booked";
+                const title = `${s.seat} · ${s.seat_class}${
+                  s.status !== "AVAILABLE" ? ` · ${s.status.toLowerCase()}` : ` · ${s.price}`
+                }`;
+                return (
+                  <button
+                    key={s.seat}
+                    type="button"
+                    disabled={disabled}
+                    title={title}
+                    onClick={() => onToggle(s)}
+                    className={`seat ${cls} ${s.seat_class === "PREMIUM" ? "seat-premium" : ""} ${
+                      atLimit ? "opacity-40" : ""
+                    } ${i === aisleAfter ? "ml-3" : ""}`}
+                  >
+                    {s.number}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

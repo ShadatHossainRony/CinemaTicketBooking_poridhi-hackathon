@@ -141,7 +141,11 @@ export default function Checkout({ hold, onExpired, onDone, onBack }) {
           ← Seat map
         </button>
         <div className="rounded-lg bg-panel p-4">
-          <h2 className="mb-3 font-semibold">Your hold</h2>
+          <h2 className="mb-1 font-semibold">🔒 Your seats are locked</h2>
+          <div className="mb-3 text-xs text-muted">
+            Locked just for you, the way a train seat locks when you start checkout — finish paying
+            before the timer runs out or they go back on sale.
+          </div>
           <div className="mb-1 text-sm">
             Seats: <strong>{holdStatus.seats.map((s) => s.seat).join(", ")}</strong>
           </div>

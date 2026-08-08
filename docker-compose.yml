@@ -144,23 +144,29 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  # ---- Frontend: BUILD-ONLY. Never started by `docker compose up` — the
-  # `build-only` profile keeps it out of the default service set, so
-  # `docker compose up` brings up db/gateway/migrate/api/api2 and nothing
-  # else touches this.
-  #
-  # deploy.sh / `make build-frontend` build this image, then `docker
-  # create` + `docker cp` pull the built /dist out to the host (default
-  # /srv/cinemaseat-dist), where host-installed Nginx serves it directly.
-  # No bind mount, no persistent container holding a mount open, no
-  # image-content-shadowed-by-an-empty-host-directory gotcha (see the
-  # comment in frontend/Dockerfile and DECISIONS.md for what that gotcha
-  # actually was — three earlier commits on this branch tried to fix it
-  # by changing the mount *path*, which doesn't address the cause).
+  # ---- Frontend: a normal running service, same shape as api/api2.
+  # Serves the built SPA via nginx:alpine (frontend/Dockerfile stage 2).
+  # Bound to loopback only — host Nginx (nginx/cinemaseat.conf) proxies
+  # `location /` to it, exactly like it proxies API paths to api/api2.
+  # No bind mount, no build-only profile, no separate extraction step:
+  # `docker compose up` and `docker compose build frontend && docker
+  # compose up -d --no-deps --force-recreate frontend` both just work.
   frontend:
     build: { context: ./frontend, dockerfile: Dockerfile }
-    image: cinemaseat-frontend:local
-    profiles: ["build-only"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   pgdata:

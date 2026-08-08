@@ -15,7 +15,7 @@ body {
 .seat {
   width: 26px;
   height: 26px;
-  border-radius: 4px;
+  border-radius: 6px 6px 3px 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -23,6 +23,7 @@ body {
   cursor: pointer;
   user-select: none;
   border: 1px solid transparent;
+  transition: transform 0.1s ease, background 0.15s ease;
 }
 
 .seat.available {
@@ -31,11 +32,13 @@ body {
 }
 .seat.available:hover {
   background: #2b3a5c;
+  transform: translateY(-1px);
 }
 .seat.selected {
   background: #e50914;
   color: #fff;
   border-color: #ff7b80;
+  box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.25);
 }
 .seat.held {
   background: #6b7280;
@@ -52,4 +55,17 @@ body {
    colour applies — status still wins the fill, class is just an accent. */
 .seat-premium {
   box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.6);
+}
+.seat-premium.selected {
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.6), 0 0 0 2px rgba(229, 9, 20, 0.25);
+}
+
+/* The curved screen indicator above the seat map — an ellipse sliced by
+   overflow, lit from below like an actual cinema screen glow. */
+.screen-curve {
+  width: min(90%, 420px);
+  height: 14px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  background: linear-gradient(180deg, rgba(229, 9, 20, 0.35), rgba(229, 9, 20, 0.05));
+  box-shadow: 0 6px 24px 4px rgba(229, 9, 20, 0.25);
 }
